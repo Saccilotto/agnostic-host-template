@@ -1,16 +1,3 @@
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
-provider "aws" {
-  region = var.region
-}
-
 # Network resources
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
@@ -120,6 +107,21 @@ data "aws_ami" "ubuntu" {
   owners = ["099720109477"] # Canonical
 }
 
+# Create local file for storing SSH key 
+resource "local_file" "ssh_key" {
+  count    = fileexists("${path.module}/ssh/deployer.pub") ? 0 : 1
+  content  = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCxO27JE5uXiHmzTcIHzjGT+5OHaW/t/+5SsLGcS4AXD6hU5hLHgxKfiCLPHP/ckBBZTXGjEEjO7uDdEjCz4cX1Es7mBqSIyJBY8IRhUaP8gqHlL7ABD4GVlIaGIEFSyRiOitwlHLJTn4XvPUXOn5HpyXR6R9lxgjlQI3tLMSgcRXYBxDXTSjHdkGvq6cQaKDSyzcLvPWbP/QNkB9YYO3kbqDfuK/k8ZY5jJsm0TYx7Vwa9VcGa+ayWDYQxJTLXulsBGdvQzGRTXOKnONP7QAQ8IJIlzZBCKhNRFEFADIKZrGz67n/nh6AwXbvLNBYDDEJJxJKyGtlIlsX8uL8dD1TadDnX test-key"
+  filename = "${path.module}/ssh/deployer.pub"
+  file_permission = "0600"
+}
+
+resource "aws_key_pair" "deployer" {
+  key_name   = "${var.app_name}-deployer-key-${var.environment}"
+  public_key = file("${path.module}/ssh/deployer.pub")
+  
+  depends_on = [local_file.ssh_key]
+}
+
 resource "aws_instance" "web" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
@@ -143,29 +145,6 @@ resource "aws_instance" "web" {
               EOF
 }
 
-# SSH key pair
-resource "aws_key_pair" "deployer" {
-  key_name   = "${var.app_name}-deployer-key-${var.environment}"
-  public_key = file("${path.module}/ssh/deployer.pub")  # You need to create this key
-}
-
-# Route 53 DNS configuration
-resource "aws_route53_zone" "main" {
-  name = var.domain_name
-
-  tags = {
-    Environment = var.environment
-  }
-}
-
-resource "aws_route53_record" "www" {
-  zone_id = aws_route53_zone.main.zone_id
-  name    = var.domain_name
-  type    = "A"
-  ttl     = "300"
-  records = [aws_instance.web.public_ip]
-}
-
 # Output values
 output "public_ip" {
   description = "Public IP address of the EC2 instance"
@@ -177,7 +156,7 @@ output "website_url" {
   value       = "https://${var.domain_name}"
 }
 
-# Variables
+# Variables 
 variable "app_name" {
   description = "Name of the application"
   type        = string

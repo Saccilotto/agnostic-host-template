@@ -1,23 +1,4 @@
-terraform {
-  required_providers {
-    external = {
-      source  = "hashicorp/external"
-      version = "~> 2.3.0"
-    }
-    null = {
-      source  = "hashicorp/null"
-      version = "~> 3.2.0"
-    }
-    dns = {
-      source  = "hashicorp/dns"
-      version = "~> 3.2.0"
-    }
-    local = {
-      source  = "hashicorp/local"
-      version = "~> 2.4.0"
-    }
-  }
-}
+
 
 # Create API token file for scripts
 resource "local_file" "api_token" {
@@ -26,27 +7,34 @@ resource "local_file" "api_token" {
   file_permission = "0600"
 }
 
+# Store path for reuse and to fix destroy provisioner issue
+locals {
+  api_token_path = local_file.api_token.filename
+}
+
 # VPS provisioning
 resource "null_resource" "hostinger_vps" {
   triggers = {
     server_name = "${var.app_name}-${var.environment}"
     plan_id     = var.vps_plan
     timestamp   = timestamp()  # Force recreation on apply if needed
+    # Store token path in the trigger so it's available during destroy
+    token_path  = local.api_token_path
   }
 
   provisioner "local-exec" {
     command = "${path.module}/scripts/provision_vps.sh ${self.triggers.server_name} ${self.triggers.plan_id}"
     environment = {
-      API_TOKEN_FILE = local_file.api_token.filename
+      API_TOKEN_FILE = local.api_token_path
     }
   }
 
-  # Ensure the VPS is destroyed when the resource is destroyed
+  # Fixed destroy provisioner to use self reference
   provisioner "local-exec" {
     when    = destroy
     command = "${path.module}/scripts/destroy_vps.sh ${self.triggers.server_name}"
     environment = {
-      API_TOKEN_FILE = local_file.api_token.filename
+      API_TOKEN_FILE = self.triggers.token_path
     }
   }
 }
@@ -56,7 +44,7 @@ data "external" "vps_details" {
   program = ["${path.module}/scripts/get_vps_details.sh", "${null_resource.hostinger_vps.triggers.server_name}"]
   
   query = {
-    api_token_file = local_file.api_token.filename
+    api_token_file = local.api_token_path
   }
   
   depends_on = [null_resource.hostinger_vps]
@@ -67,12 +55,14 @@ resource "null_resource" "hostinger_dns" {
   triggers = {
     domain = var.domain_name
     ip     = data.external.vps_details.result.ip_address
+    # Store token path in the trigger
+    token_path = local.api_token_path
   }
 
   provisioner "local-exec" {
     command = "${path.module}/scripts/setup_dns.sh ${self.triggers.domain} ${self.triggers.ip}"
     environment = {
-      API_TOKEN_FILE = local_file.api_token.filename
+      API_TOKEN_FILE = local.api_token_path
     }
   }
 
@@ -85,12 +75,14 @@ resource "null_resource" "app_deployment" {
     server_name = null_resource.hostinger_vps.triggers.server_name
     ip_address  = data.external.vps_details.result.ip_address
     timestamp   = timestamp()  # Will redeploy on each apply
+    # Store token path in the trigger
+    token_path = local.api_token_path
   }
 
   provisioner "local-exec" {
     command = "${path.module}/scripts/deploy_app.sh ${self.triggers.server_name} ${self.triggers.ip_address}"
     environment = {
-      API_TOKEN_FILE = local_file.api_token.filename
+      API_TOKEN_FILE = local.api_token_path
       APP_ENV        = var.environment
     }
   }

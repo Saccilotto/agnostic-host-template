@@ -4,7 +4,6 @@
 # AWS implementation
 module "aws" {
   source = "../providers/aws"
-  count  = var.cloud_provider == "aws" ? 1 : 0
   
   app_name      = var.app_name
   environment   = var.environment
@@ -13,10 +12,8 @@ module "aws" {
   instance_type = var.aws_instance_type
 }
 
-# Hostinger implementation
 module "hostinger" {
   source = "../providers/hostinger"
-  count  = var.cloud_provider == "hostinger" ? 1 : 0
   
   app_name    = var.app_name
   environment = var.environment
@@ -25,19 +22,31 @@ module "hostinger" {
   vps_plan    = var.hostinger_vps_plan
 }
 
-# Forward outputs from the selected provider
+# Forward outputs from the selected provider using locals
 locals {
-  selected_module = var.cloud_provider == "aws" ? module.aws[0] : module.hostinger[0]
+  selected_provider = var.cloud_provider
+  
+  outputs = {
+    aws = {
+      public_ip   = module.aws.public_ip
+      website_url = module.aws.website_url
+    }
+    
+    hostinger = {
+      public_ip   = module.hostinger.public_ip
+      website_url = module.hostinger.website_url
+    }
+  }
 }
 
 output "public_ip" {
   description = "Public IP address of the server"
-  value       = local.selected_module.public_ip
+  value       = local.outputs[local.selected_provider].public_ip
 }
 
 output "website_url" {
   description = "URL of the deployed website"
-  value       = local.selected_module.website_url
+  value       = local.outputs[local.selected_provider].website_url
 }
 
 # Variables for the infrastructure module
